@@ -1,0 +1,10 @@
+node_modules
+.credentials
+npm-debug.log
+.DS_Store
+*.env
+functions
+.firebase
+.serverless
+
+
