@@ -2,7 +2,6 @@
 import express, { urlencoded, json } from 'express';
 import { SQS_REGION, SQS_QUEUE_URL, COMMAND_REVIEW, ASANA_WORKSPACE_ID, ASANA_PROJECT_ID } from "./constants";
 import { WebClient, LogLevel } from '@slack/web-api';
-import { createEventAdapter } from '@slack/events-api';
 import { isEmpty, uniqBy, get } from 'lodash';
 import dayjs from 'dayjs';
 import asana from 'asana'; // Asana is a Task management tool, much like JIRA.
@@ -11,7 +10,6 @@ import * as AWS from 'aws-sdk'; //aws-sdk v3 has a bug: https://github.com/aws/a
 
 // Read environment variables
 const token = process.env.SLACK_BOT_TOKEN;
-const signingSecret = process.env.SLACK_SIGNING_SECRET;
 const asanaAccessToken = process.env.ASANA_PAT;
 const port = process.env.PORT || 3000;
 
@@ -22,21 +20,16 @@ const client = new WebClient(token, { logLevel: LogLevel.DEBUG });
 const asanaClient = asana.Client.create({ "defaultHeaders": { "asana-enable": "string_ids,new_user_task_lists" } }).useAccessToken(asanaAccessToken);
 asanaClient.users.me().then(() => console.log("Connected to Asana."));
 
-// Initialize EventAdapter
-const slackEvents = createEventAdapter(signingSecret);
-
 // Set AWS region
 AWS.config.update({ region: SQS_REGION });
 
 // Create an Amazon SQS client service object
 const sqs = new AWS.SQS({ apiVersion: '2012-11-05' });
 
-
 // Create an express application
 const app = express();
 
 // Plug in middlewares
-//app.use('/slack/events', slackEvents.requestListener());
 app.use(urlencoded({ extended: true }));
 app.use(json());
 
@@ -46,17 +39,35 @@ app.get('/', function (req, res) {
     res.send('Slack Bot Application is Running!');
 })
 
-// Route for Event Subsription
+// Route for Event Subsription. It's only used for initial verification.
 app.post('/slack/events/', (request, response) => {
     const payload = request.body;
-    if(payload.type === 'url_verification') {
-        if(data.token === process.env.SLACK_APP_VERIFICATION_TOKEN) {
+    if (payload.type === 'url_verification') {
+        if (data.token === process.env.SLACK_APP_VERIFICATION_TOKEN) {
             response.send(payload.challenge);
-        }else {
+        } else {
             response.status(401).send();
         }
+    } else {
+        response.send();
     }
-    console.log(payload);
+})
+
+// Route for handing Slash commands
+app.post('/slack/commands/', (request, response) => {
+    const payload = request.body;
+    const channel = payload.channel_id;
+    const user = payload.user_id;
+    //console.log(payload);
+    if (payload && payload.command) {
+        if (payload.command === COMMAND_REVIEW) {
+            response.json({
+                "response_type": "ephemeral",
+                "text": "Processing request..."
+            });
+            fetchMessages(channel, user);
+        }
+    }
 })
 
 // Route for handing Interactive requests
@@ -87,52 +98,10 @@ app.post('/slack/actions/', (request, response) => {
     }
 })
 
-// Route for handing Slash commands
-app.post('/slack/commands/', (request, response) => {
-    const payload = request.body;
-    const channel = payload.channel_id;
-    const user = payload.user_id;
-    //console.log(payload);
-    if (payload && payload.command) {
-        if (payload.command === COMMAND_REVIEW) {
-            response.json({
-                "response_type": "ephemeral",
-                "text": "Processing request..."
-            });
-            fetchMessages(channel, user);
-        }
-    }
-})
-
 // Start Express Server
 app.listen(port, () => console.log(`Slack Bot API is running on port ${port}`));
 
 
-// Listen to events
-// Attach listeners to events by Slack Event "type". See: https://api.slack.com/events/message.im
-/* slackEvents.on('message', (event) => {
-    console.log(`Received a message event: user <@${event.user}> in channel ${event.channel} says ${event.text}`);
-    if (event.text === "Hi") {
-        sendMessage(event.channel, `Hi there, <@${event.user}>`);
-    }
-});
-
-(async () => {
-    const server = await slackEvents.start(8080);
-    console.log(`Listening for events on ${server.address().port}`);
-})(); */
-
-/**
- * Async helper method to send a message to a Slack channel.
- * @param {String} channel
- * @param {String} message
- */
-const sendMessage = async (channel, message) => {
-    return client.chat.postMessage({
-        channel: channel,
-        text: message,
-    });
-}
 
 /**
  * Fetches messages (Negative Reviews) from Amazon SQS, processes the messages and then deletes the retrieved messages from SQS.
