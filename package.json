@@ -1,13 +1,13 @@
 {
-  "name": "companionbot",
+  "name": "reviewbot",
   "version": "1.0.0",
-  "description": "",
+  "description": "ReviewBBot: A Slack bot to fetch negative reviews/comments from twitter mentions and help create task.",
   "main": "src",
   "scripts": {
     "start": "node .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
+  "author": "pinakidey.com",
   "license": "ISC",
   "engines": {
     "node": "15.x"

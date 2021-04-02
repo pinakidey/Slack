@@ -3,6 +3,8 @@ import express, { urlencoded, json } from 'express';
 import { SQS_REGION, SQS_QUEUE_URL, COMMAND_REVIEW, ASANA_WORKSPACE_ID, ASANA_PROJECT_ID } from "./constants";
 import { WebClient, LogLevel } from '@slack/web-api';
 import { isEmpty, uniqBy, get } from 'lodash';
+import crypto from 'crypto';
+import qs from 'qs'; // Support RFC1738 space encoding
 import dayjs from 'dayjs';
 import asana from 'asana'; // Asana is a Task management tool, much like JIRA.
 import * as AWS from 'aws-sdk'; //aws-sdk v3 has a bug: https://github.com/aws/aws-sdk-js-v3/issues/1893, using v2
@@ -10,6 +12,7 @@ import * as AWS from 'aws-sdk'; //aws-sdk v3 has a bug: https://github.com/aws/a
 
 // Read environment variables
 const token = process.env.SLACK_BOT_TOKEN;
+const signingSecret = process.env.SLACK_SIGNING_SECRET;
 const asanaAccessToken = process.env.ASANA_PAT;
 const port = process.env.PORT || 3000;
 
@@ -33,6 +36,18 @@ const app = express();
 app.use(urlencoded({ extended: true }));
 app.use(json());
 
+// Use a middleware as interceptor for client verification
+app.use(function (req, res, next) {
+    // Validate request
+    if (validateRequest(req)) {
+        console.log("Request: Valid");
+        next();
+    } else {
+        console.log("Request: Invalid");
+        return res.status(200).send('Verification failed');
+    }
+});
+
 
 // Default route for showing app status
 app.get('/', function (req, res) {
@@ -43,7 +58,7 @@ app.get('/', function (req, res) {
 app.post('/slack/events/', (request, response) => {
     const payload = request.body;
     if (payload.type === 'url_verification') {
-        if (data.token === process.env.SLACK_APP_VERIFICATION_TOKEN) {
+        if (payload.token === process.env.SLACK_APP_VERIFICATION_TOKEN) {
             response.send(payload.challenge);
         } else {
             response.status(401).send();
@@ -295,4 +310,20 @@ const createAsanaTask = async (payload, channel, user) => {
             console.log(typeof error === 'obbject' ? JSON.stringify(error) : error);
             sendEphemeralMessage(channel, `Failed to create task on Asana.`, user);
         });
+}
+
+/**
+ * Validates `request` with Signing Secret
+ * @param {Request} request
+ */
+const validateRequest = (request) => {
+    let request_body = qs.stringify(request.body,{format:'RFC1738'});
+    let timestamp = request.headers['x-slack-request-timestamp'];
+    let request_signature = request.headers['x-slack-signature'];
+    let now = dayjs().unix().toString();
+    if (Math.abs(now - timestamp) > 60 * 5) return false;
+    let sig_basestring = 'v0:' + timestamp + ':' + request_body;
+    let signature = 'v0=' + crypto.createHmac('sha256', signingSecret).update(sig_basestring, 'utf8').digest('hex');
+    //console.log([request_body, request.headers, now, timestamp, signature, request_signature]);
+    return crypto.timingSafeEqual(Buffer.from(signature, 'utf8'), Buffer.from(request_signature, 'utf8'));
 }
