@@ -1,83 +1,125 @@
 
 import express, { urlencoded, json } from 'express';
-import { BOT_CHANNEL, SQS_REGION, SQS_QUEUE_URL, COMMAND_REVIEW } from "./constants";
+import { SQS_REGION, SQS_QUEUE_URL, COMMAND_REVIEW, ASANA_WORKSPACE_ID, ASANA_PROJECT_ID } from "./constants";
 import { WebClient, LogLevel } from '@slack/web-api';
 import { createEventAdapter } from '@slack/events-api';
+import { isEmpty, uniqBy, get } from 'lodash';
+import dayjs from 'dayjs';
+import asana from 'asana'; // Asana is a Task management tool, much like JIRA.
 import * as AWS from 'aws-sdk'; //aws-sdk v3 has a bug: https://github.com/aws/aws-sdk-js-v3/issues/1893, using v2
 
 
-
 // Read environment variables
-const token = process.env.SLACK_BOT_TOKEN; //xoxb-***
+const token = process.env.SLACK_BOT_TOKEN;
 const signingSecret = process.env.SLACK_SIGNING_SECRET;
+const asanaAccessToken = process.env.ASANA_PAT;
 const port = process.env.PORT || 3000;
 
 // Initialize WebAPI Client
 const client = new WebClient(token, { logLevel: LogLevel.DEBUG });
+
+// Initialize Asana Client
+const asanaClient = asana.Client.create({ "defaultHeaders": { "asana-enable": "string_ids,new_user_task_lists" } }).useAccessToken(asanaAccessToken);
+asanaClient.users.me().then(() => console.log("Connected to Asana."));
 
 // Initialize EventAdapter
 const slackEvents = createEventAdapter(signingSecret);
 
 // Set AWS region
 AWS.config.update({ region: SQS_REGION });
+
 // Create an Amazon SQS client service object
 const sqs = new AWS.SQS({ apiVersion: '2012-11-05' });
 
 
 // Create an express application
 const app = express();
+
 // Plug in middlewares
-app.use('/slack/events', slackEvents.requestListener());
+//app.use('/slack/events', slackEvents.requestListener());
 app.use(urlencoded({ extended: true }));
 app.use(json());
 
+
+// Default route for showing app status
 app.get('/', function (req, res) {
     res.send('Slack Bot Application is Running!');
 })
 
+// Route for Event Subsription
 app.post('/slack/events/', (request, response) => {
-    console.log(request);
+    const payload = request.body;
+    if(payload.type === 'url_verification') {
+        if(data.token === process.env.SLACK_APP_VERIFICATION_TOKEN) {
+            response.send(payload.challenge);
+        }else {
+            response.status(401).send();
+        }
+    }
+    console.log(payload);
 })
 
+// Route for handing Interactive requests
 app.post('/slack/actions/', (request, response) => {
-    console.log(request);
+    const payload = JSON.parse(get(request, "body.payload", "")) || {};
+    const action_id = get(payload, "actions[0].action_id");
+    const value = get(payload, "actions[0].value");
+    const channel = get(payload, "channel.id");
+    const channel_name = get(payload, "channel.name");
+    const username = get(payload, "user.name");
+    const user = get(payload, "user.id");
+
+    if (action_id === 'create_task_action') {
+        let payload = {
+            "name": `New Task from #${channel_name}/${username}`,
+            "notes": value,
+            "workspace": ASANA_WORKSPACE_ID,
+            "projects": ASANA_PROJECT_ID
+        }
+        createAsanaTask(payload, channel, user);
+        response.send("OK");
+    } else if (action_id === 'load_more_action') {
+        response.json({
+            "response_type": "ephemeral",
+            "text": "Fetching more reviews..."
+        });
+        fetchMessages(channel, user);
+    }
 })
 
-/* Accepts and processes Slack Slash Commands */
+// Route for handing Slash commands
 app.post('/slack/commands/', (request, response) => {
     const payload = request.body;
+    const channel = payload.channel_id;
+    const user = payload.user_id;
+    //console.log(payload);
     if (payload && payload.command) {
         if (payload.command === COMMAND_REVIEW) {
             response.json({
-                "response_type": "in_channel",
+                "response_type": "ephemeral",
                 "text": "Processing request..."
             });
-            fetchMessages();
+            fetchMessages(channel, user);
         }
     }
 })
 
 // Start Express Server
-app.listen(port, () => console.log(`Listening for events on port ${port}`));
+app.listen(port, () => console.log(`Slack Bot API is running on port ${port}`));
 
 
 // Listen to events
 // Attach listeners to events by Slack Event "type". See: https://api.slack.com/events/message.im
-slackEvents.on('message', (event) => {
-    //console.log(`Received a message event: user <@${event.user}> in channel ${event.channel} says ${event.text}`);
+/* slackEvents.on('message', (event) => {
+    console.log(`Received a message event: user <@${event.user}> in channel ${event.channel} says ${event.text}`);
     if (event.text === "Hi") {
         sendMessage(event.channel, `Hi there, <@${event.user}>`);
     }
 });
 
-
-
-/* (async () => {
-    // Post a message to the channel, and await the result.
-    const result = await sendMessage(BOT_CHANNEL, "Review Bot is Online...");
-
-    // The result contains an identifier for the message, `ts`.
-    console.log(`Successfully send message ${result.ts}`);
+(async () => {
+    const server = await slackEvents.start(8080);
+    console.log(`Listening for events on ${server.address().port}`);
 })(); */
 
 /**
@@ -85,7 +127,7 @@ slackEvents.on('message', (event) => {
  * @param {String} channel
  * @param {String} message
  */
-async function sendMessage(channel, message) {
+const sendMessage = async (channel, message) => {
     return client.chat.postMessage({
         channel: channel,
         text: message,
@@ -93,18 +135,11 @@ async function sendMessage(channel, message) {
 }
 
 /**
- * Helper method to send a generic error message to a Slack channel.
+ * Fetches messages (Negative Reviews) from Amazon SQS, processes the messages and then deletes the retrieved messages from SQS.
+ * @param {String} channel
+ * @param {String} user
  */
-function sendError() {
-    sendMessage(BOT_CHANNEL, "There was an error processing the request.");
-}
-
-/* SQS Operations */
-
-/**
- * Fetches messages (Negative Reviews) from Amazon SQS and then deletes the retrieved messages from SQS.
- */
-const fetchMessages = async () => {
+const fetchMessages = async (channel, user) => {
     // Set parameters
     const params = {
         AttributeNames: ["SentTimestamp"],
@@ -115,34 +150,180 @@ const fetchMessages = async () => {
         WaitTimeSeconds: 0
     };
     let messages = [];
+    try {
+        sqs.receiveMessage(params, function (err, data) {
+            if (err) {
+                console.log("Receive Error", err);
+                sendEphemeralMessage(channel, "An error occurred while fetching messages from SQS.", user);
+            } else if (!isEmpty(data.Messages)) {
+                messages = data.Messages;
 
-    sqs.receiveMessage(params, function (err, data) {
-        if (err) {
-            console.log("Receive Error", err);
-            sendError();
-        } else if (data.Messages) {
-            //console.log(data.Messages);
-            messages = data.Messages || [];
-            messages.forEach(m => {
-                var deleteParams = {
-                    QueueUrl: SQS_QUEUE_URL,
-                    ReceiptHandle: m.ReceiptHandle
-                };
-                sqs.deleteMessage(deleteParams, function (err, data) {
-                    if (err) {
-                        console.log("Delete Error", err);
-                        sendError();
-                    } else {
-                        console.log("Message Deleted: ", data);
-                    }
+                // Parse messages
+                const parsedMessages = uniqBy(messages.map(m => JSON.parse(m.Body)), 'body.id')
+                    .filter(item => item.body && item.sentiment && item.sentiment.Sentiment === 'NEGATIVE');
+                console.log(parsedMessages);
+
+                // Process each message and send to Slack
+                if (parsedMessages.length > 0) {
+                    processMessages(parsedMessages, channel, user);
+                } else {
+                    sendEphemeralMessage(channel, "There are no new negative reviews.", user);
+                }
+
+                // Delete fetched messages from SQS queue
+                messages.forEach(m => {
+                    var deleteParams = {
+                        QueueUrl: SQS_QUEUE_URL,
+                        ReceiptHandle: m.ReceiptHandle
+                    };
+                    sqs.deleteMessage(deleteParams, function (err, data) {
+                        if (err) {
+                            console.log("Delete Error", err);
+                            sendEphemeralMessage(channel, "An error occurred while deleting messages from SQS.", user);
+                        } else {
+                            console.log("Message Deleted: ", data);
+                        }
+                    });
                 });
-            });
-            const parsedMessages = messages.map(m => JSON.parse(m.Body));
-            console.log(parsedMessages);
-            parsedMessages.forEach(item => sendMessage(BOT_CHANNEL, item.text));
-        } else {
-            console.log("No message found.");
-            sendMessage(BOT_CHANNEL, "There are no new reviews.");
+            } else {
+                console.log("No message found.");
+                sendEphemeralMessage(channel, "There are no new reviews.", user);
+            }
+        });
+    } catch (error) {
+        console.log(error)
+        sendEphemeralMessage(channel, typeof error === 'object' ? JSON.stringify(error) : error, user);
+    }
+};
+
+/**
+ * Creates Block message using `message` and sends to `channel` as an ephemeral message.
+ * @param {Object} messages
+ * @param {String} channel
+ * @param {String} user
+ */
+const processMessages = (messages, channel, user) => {
+    let blocks = [];
+    blocks.push({
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": ":mag: Latest Negative Reviews"
         }
     });
-};
+    blocks.push({
+        "type": "divider"
+    });
+
+    messages.forEach(item => {
+        blocks.push({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": item.body.text
+            },
+            "accessory": {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Create Task",
+                },
+                "value": item.body.text,
+                "action_id": "create_task_action"
+            }
+        });
+    });
+
+    blocks.push({
+        "type": "divider"
+    });
+
+    blocks.push({
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "style": "primary",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Load more"
+                },
+                "value": "load_more",
+                "action_id": "load_more_action"
+            }
+        ]
+    });
+
+    sendEphemeralMessage(channel, "Found new reviews", user, blocks);
+}
+
+/**
+ * Sends an ephemeral message in Slack `channel`, only visible to the `user`. `user` must be a member of the `channel`.
+ * @param {String} channel
+ * @param {String} text
+ * @param {String} user
+ * @param {Array} blocks
+ */
+const sendEphemeralMessage = (channel, text, user, blocks = []) => {
+    return client.chat.postEphemeral({
+        channel,
+        user,
+        text,
+        blocks
+    });
+}
+
+/**
+ * A wrapper function to create a new task on Asana and send a block message back to `channel`
+ * @param {Object} payload
+ * @param {String} channel
+ * @param {String} user
+ */
+const createAsanaTask = async (payload, channel, user) => {
+    asanaClient.tasks.createTask(payload)
+        .then((result) => {
+            if (!isEmpty(result)) {
+                let blocks = [];
+                blocks.push({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": `Task Created:\n*<${result.permalink_url}|${result.name}>*`
+                    }
+                });
+                blocks.push({
+                    "type": "section",
+                    "fields": [
+                        {
+                            "type": "mrkdwn",
+                            "text": `*Workspace:*\n${get(result, "workspace.name")}`
+                        },
+                        {
+                            "type": "mrkdwn",
+                            "text": `*Project:*\n${get(result, "memberships[0].project.name")}`
+                        },
+                        {
+                            "type": "mrkdwn",
+                            "text": `*Section:*\n${get(result, "memberships[0].section.name")}`
+                        },
+                        {
+                            "type": "mrkdwn",
+                            "text": `*When:*\nSubmitted ${dayjs(result.created_at)}`
+                        }
+                    ]
+                });
+                blocks.push({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": `*Description:*\n${result.notes}`
+                    }
+                });
+                sendEphemeralMessage(channel, `A new Task is Created.`, user, blocks);
+            }
+        })
+        .catch(error => {
+            console.log(typeof error === 'obbject' ? JSON.stringify(error) : error);
+            sendEphemeralMessage(channel, `Failed to create task on Asana.`, user);
+        });
+}

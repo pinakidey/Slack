@@ -29,6 +29,10 @@ const process = (body = {}) => {
     });
 }
 
+/**
+ * Helper function for sending messages to SQS
+ * @param {Object} event
+ */
 const sendToSQS = (event = {}) => {
     var params = {
         MessageBody: JSON.stringify(event),
@@ -44,6 +48,11 @@ const sendToSQS = (event = {}) => {
     });
 }
 
+/**
+ * Main lambda function that gets invoked whenever a new message arrives in the SQS queue it's associated with.
+ * @param {Object} event
+ * @param {Object} context
+ */
 exports.handler = (event, context) => {
     event.Records.forEach(record => {
         const { body } = record;
