@@ -200,11 +200,13 @@ const processMessages = (messages, channel, user) => {
     });
 
     messages.forEach(item => {
+        let link = `https://twitter.com/${item.body.username}/status/${item.body.id}`;
+        let text = `${item.body.text}\n*<${link}|Link>*`;
         blocks.push({
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": item.body.text
+                "text":  text
             },
             "accessory": {
                 "type": "button",
@@ -212,7 +214,7 @@ const processMessages = (messages, channel, user) => {
                     "type": "plain_text",
                     "text": "Create Task",
                 },
-                "value": item.body.text,
+                "value": text,
                 "action_id": "create_task_action"
             }
         });

@@ -11,13 +11,14 @@ EXEC_ROLE="arn:aws:iam::$AWS_ACCOUNT_ID:role/$ROLE_NAME"
 cd ../src/
 pwd
 
+# Create Zip
 zip $FUNCTION_FILE $FUNCTION_JS
 
-
+# Remove existing function with same name
 aws lambda delete-function \
     --function-name $FUNCTION_NAME \
 
-
+# Create new function
 aws lambda create-function \
     --region $REGION \
     --function-name $FUNCTION_NAME \
@@ -30,9 +31,9 @@ aws lambda create-function \
     --memory-size 128 \
     --debug
 
-# Test Locally
-aws lambda invoke --function-name $FUNCTION_NAME \
-    --payload file://../test/input.txt ../test/outputfile.txt \
-    --cli-binary-format raw-in-base64-out
-
+# Remove Zip
 rm -f lambda.zip
+
+# Test Locally
+cd -
+sh test.sh

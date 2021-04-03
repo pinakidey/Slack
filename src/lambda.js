@@ -41,9 +41,9 @@ const sendToSQS = (event = {}) => {
     sqs.sendMessage(params, function (err, data) {
         console.log(params);
         if (err) {
-            console.log('error:', "Failed to Send Message" + err);
+            console.log('Error: Failed to Send Message. ', err);
         } else {
-            console.log('data:', data.MessageId);
+            console.log('Created Message Id: ', data.MessageId);
         }
     });
 }
@@ -52,22 +52,23 @@ const sendToSQS = (event = {}) => {
  * Main lambda function that gets invoked whenever a new message arrives in the SQS queue it's associated with.
  * @param {Object} event
  * @param {Object} context
+ * @description uses synchronous invocation to avoid need for a dead-letter-queue
  */
-exports.handler = (event, context) => {
+exports.handler = (event) => {
     event.Records.forEach(record => {
         const { body } = record;
         try {
             const parsedBody = typeof body === "string" ? JSON.parse(body) : body;
-            if (parsedBody.text) {
+            // Process messages having English texts only
+            if (parsedBody.text && parsedBody.lang === "en") {
                 process(parsedBody);
             } else {
-                console.log("Invalid body: ", body);
+                console.log("Unsupported body: ", body);
             }
         } catch (error) {
             console.log("Parse error: ", error, body);
         }
     });
-    return "OK";
 }
 
 
