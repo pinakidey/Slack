@@ -39,12 +39,14 @@ app.use(json());
 // Use a middleware as interceptor for client verification
 app.use(function (req, res, next) {
     // Validate request
-    if (validateRequest(req)) {
-        console.log("Request: Valid");
-        next();
-    } else {
-        console.log("Request: Invalid");
-        return res.status(200).send('Verification failed');
+    if (req.url !== '/') {
+        if (validateRequest(req)) {
+            console.log("Request: Valid");
+            next();
+        } else {
+            console.log("Request: Invalid");
+            return res.status(200).send('Verification failed'); // Slack expects a 200 response withing 3 sec.
+        }
     }
 });
 
@@ -206,7 +208,7 @@ const processMessages = (messages, channel, user) => {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text":  text
+                "text": text
             },
             "accessory": {
                 "type": "button",
@@ -319,13 +321,18 @@ const createAsanaTask = async (payload, channel, user) => {
  * @param {Request} request
  */
 const validateRequest = (request) => {
-    let request_body = qs.stringify(request.body,{format:'RFC1738'});
-    let timestamp = request.headers['x-slack-request-timestamp'];
-    let request_signature = request.headers['x-slack-signature'];
-    let now = dayjs().unix().toString();
-    if (Math.abs(now - timestamp) > 60 * 5) return false;
-    let sig_basestring = 'v0:' + timestamp + ':' + request_body;
-    let signature = 'v0=' + crypto.createHmac('sha256', signingSecret).update(sig_basestring, 'utf8').digest('hex');
-    //console.log([request_body, request.headers, now, timestamp, signature, request_signature]);
-    return crypto.timingSafeEqual(Buffer.from(signature, 'utf8'), Buffer.from(request_signature, 'utf8'));
+    try {
+        let request_body = qs.stringify(request.body, { format: 'RFC1738' });
+        let timestamp = request.headers['x-slack-request-timestamp'];
+        let request_signature = request.headers['x-slack-signature'];
+        let now = dayjs().unix().toString();
+        if (Math.abs(now - timestamp) > 60 * 5) return false;
+        let sig_basestring = 'v0:' + timestamp + ':' + request_body;
+        let signature = 'v0=' + crypto.createHmac('sha256', signingSecret).update(sig_basestring, 'utf8').digest('hex');
+        //console.log([request_body, request.headers, now, timestamp, signature, request_signature]);
+        return crypto.timingSafeEqual(Buffer.from(signature, 'utf8'), Buffer.from(request_signature, 'utf8'));
+    } catch (error) {
+        console.log(error);
+        return false;
+    }
 }
