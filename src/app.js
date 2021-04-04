@@ -37,16 +37,14 @@ app.use(urlencoded({ extended: true }));
 app.use(json());
 
 // Use a middleware as interceptor for client verification
-app.use(function (req, res, next) {
+app.all('/slack/*', function (req, res, next) {
     // Validate request
-    if (req.url !== '/') {
-        if (validateRequest(req)) {
-            console.log("Request: Valid");
-            next();
-        } else {
-            console.log("Request: Invalid");
-            return res.status(200).send('Verification failed'); // Slack expects a 200 response withing 3 sec.
-        }
+    if (validateRequest(req)) {
+        console.log("Request: Valid");
+        next();
+    } else {
+        console.log("Request: Invalid");
+        return res.status(200).send('Verification failed'); // Slack expects a 200 response withing 3 sec.
     }
 });
 
@@ -330,7 +328,7 @@ const validateRequest = (request) => {
         let sig_basestring = 'v0:' + timestamp + ':' + request_body;
         let signature = 'v0=' + crypto.createHmac('sha256', signingSecret).update(sig_basestring, 'utf8').digest('hex');
         //console.log([request_body, request.headers, now, timestamp, signature, request_signature]);
-        return crypto.timingSafeEqual(Buffer.from(signature, 'utf8'), Buffer.from(request_signature, 'utf8'));
+        return crypto.timingSafeEqual(Buffer.from(signature || "", 'utf8'), Buffer.from(request_signature || "", 'utf8'));
     } catch (error) {
         console.log(error);
         return false;
