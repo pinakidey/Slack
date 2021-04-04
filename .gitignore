@@ -1,14 +1,9 @@
 *.env
 .DS_Store
 .credentials
-.firebase
-.serverless
-functions
 node_modules
 npm-debug.log
 test/outputfile.txt
-.firebaserc
-firebase.json
-serverless.yml
+newrelic_agent.log
 
 
