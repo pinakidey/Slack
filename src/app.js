@@ -214,7 +214,7 @@ const processMessages = (messages, channel, user) => {
                     "type": "plain_text",
                     "text": "Create Task",
                 },
-                "value": text,
+                "value": `${item.body.text}\n${link}`,
                 "action_id": "create_task_action"
             }
         });
