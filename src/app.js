@@ -81,6 +81,11 @@ app.post('/slack/commands/', (request, response) => {
                 "text": "Processing request..."
             });
             fetchMessages(channel, user);
+        } else {
+            response.status(400).json({
+                "response_type": "ephemeral",
+                "text": `Command not found. Try ${COMMAND_REVIEW}`
+            });
         }
     }
 })
@@ -103,18 +108,23 @@ app.post('/slack/actions/', (request, response) => {
             "projects": ASANA_PROJECT_ID
         }
         createAsanaTask(payload, channel, user);
-        response.send("OK");
+        response.send();
     } else if (action_id === 'load_more_action') {
         response.json({
             "response_type": "ephemeral",
             "text": "Fetching more reviews..."
         });
         fetchMessages(channel, user);
+    } else {
+        response.status(400).json({
+            "response_type": "ephemeral",
+            "text": "Invalid action"
+        });
     }
 })
 
 // Start Express Server
-app.listen(port, () => console.log(`Slack Bot API is running on port ${port}`));
+const server = app.listen(port, () => console.log(`Slack Bot API is running on port ${port}`));
 
 
 
@@ -124,6 +134,7 @@ app.listen(port, () => console.log(`Slack Bot API is running on port ${port}`));
  * @param {String} user
  */
 const fetchMessages = async (channel, user) => {
+    if (process.env.ENV_TEST) return;
     // Set parameters
     const params = {
         AttributeNames: ["SentTimestamp"],
@@ -309,7 +320,7 @@ const createAsanaTask = async (payload, channel, user) => {
             }
         })
         .catch(error => {
-            console.log(typeof error === 'obbject' ? JSON.stringify(error) : error);
+            console.log(typeof error === 'object' ? JSON.stringify(error) : error);
             sendEphemeralMessage(channel, `Failed to create task on Asana.`, user);
         });
 }
@@ -319,8 +330,12 @@ const createAsanaTask = async (payload, channel, user) => {
  * @param {Request} request
  */
 const validateRequest = (request) => {
+    if (process.env.ENV_TEST) return true;
+    if (isEmpty(request.body)) return false;
+    let body = request.body;
+
     try {
-        let request_body = qs.stringify(request.body, { format: 'RFC1738' });
+        let request_body = body.type === 'url_verification' ? JSON.stringify(body) : qs.stringify(request.body, { format: 'RFC1738' });
         let timestamp = request.headers['x-slack-request-timestamp'];
         let request_signature = request.headers['x-slack-signature'];
         let now = dayjs().unix().toString();
@@ -334,3 +349,7 @@ const validateRequest = (request) => {
         return false;
     }
 }
+
+
+
+module.exports = { server, validateRequest };
