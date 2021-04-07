@@ -341,7 +341,7 @@ const validateRequest = (request) => {
         let now = dayjs().unix().toString();
         if (Math.abs(now - timestamp) > 60 * 5) return false;
         let sig_basestring = 'v0:' + timestamp + ':' + request_body;
-        let signature = 'v0=' + crypto.createHmac('sha256', signingSecret).update(sig_basestring, 'utf8').digest('hex');
+        let signature = 'v0=' + crypto.createHmac('sha256', signingSecret || "").update(sig_basestring, 'utf8').digest('hex');
         //console.log([request_body, request.headers, now, timestamp, signature, request_signature]);
         return crypto.timingSafeEqual(Buffer.from(signature || "", 'utf8'), Buffer.from(request_signature || "", 'utf8'));
     } catch (error) {
