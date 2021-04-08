@@ -343,7 +343,7 @@ const validateRequest = (request) => {
         let sig_basestring = 'v0:' + timestamp + ':' + request_body;
         let signature = 'v0=' + crypto.createHmac('sha256', signingSecret || "").update(sig_basestring, 'utf8').digest('hex');
         //console.log([request_body, request.headers, now, timestamp, signature, request_signature]);
-        return crypto.timingSafeEqual(Buffer.from(signature || "", 'utf8'), Buffer.from(request_signature || "", 'utf8'));
+        return crypto.timingSafeEqual(Buffer.from(signature, 'utf8'), Buffer.from(request_signature, 'utf8'));
     } catch (error) {
         console.log(error);
         return false;

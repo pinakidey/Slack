@@ -5,7 +5,7 @@
   "main": "src",
   "scripts": {
     "start": "node .",
-    "test": "mocha --exit"
+    "test": "export ENV_TEST=true && mocha --exit"
   },
   "author": "pinakidey.com",
   "license": "ISC",

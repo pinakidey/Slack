@@ -6,7 +6,6 @@ const request = require('supertest');
 
 exports.mochaHooks = {
     beforeAll() {
-        process.env.ENV_TEST = true;
         if (!process.env.SLACK_APP_VERIFICATION_TOKEN) {
             console.log("Environment variable SLACK_APP_VERIFICATION_TOKEN not set.")
             return this.skip();
